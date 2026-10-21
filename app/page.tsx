@@ -80,6 +80,7 @@ export default function Home() {
   const routeTransitionIdRef = useRef(0);
   const [profileName, setProfileName] = useState("Student");
   const [profileCourse, setProfileCourse] = useState("");
+  const [profileYear, setProfileYear] = useState("");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [resourceClasses, setResourceClasses] = useState<ResourceClassSession[]>([]);
   const [resourceCourses, setResourceCourses] = useState<ResourceCourse[]>([]);
@@ -179,6 +180,7 @@ export default function Home() {
       if (!user) {
         setProfileName("Student");
         setProfileCourse("");
+        setProfileYear("");
         return;
       }
 
@@ -192,6 +194,7 @@ export default function Home() {
 
       setProfileName(displayName);
       setProfileCourse(typeof metadata.course === "string" ? metadata.course.trim() : "");
+      setProfileYear(typeof metadata.study_year === "string" ? metadata.study_year.trim() : "");
     }
 
     void supabase.auth.getUser().then(({ data, error }) => {
@@ -565,7 +568,7 @@ export default function Home() {
       <button className="nav-link secondary-nav" onClick={() => { setCommandOpen(true); setMobileNav(false); }}><span className="nav-number">06</span><span>AI command center</span></button>
       <div className="sidebar-bottom"><div className="handwritten-note"><span className="note-mark">A NOTE TO SELF</span><p>One thing at a time.<br/>You’re doing alright.</p><span className="note-line"/></div>
         <button className="nav-link settings-link" onClick={() => { setSettingsOpen(true); setMobileNav(false); }}><span className="nav-number">07</span><span>Preferences</span></button>
-        <div className="profile"><div className="profile-pic">{profileName.charAt(0).toUpperCase()}</div><div className="profile-info"><strong>{profileName}</strong>{profileCourse && <span>{profileCourse}</span>}</div><button aria-label="Open account and cloud sync" title="Account and cloud sync" onClick={() => { window.location.assign("/auth"); }}>•••</button></div>
+        <div className="profile"><div className="profile-pic">{profileName.charAt(0).toUpperCase()}</div><div className="profile-info"><strong>{profileName}</strong>{[profileYear, profileCourse].filter(Boolean).length > 0 && <span>{[profileYear, profileCourse].filter(Boolean).join(" · ")}</span>}</div><button aria-label="Open account and cloud sync" title="Account and cloud sync" onClick={() => { window.location.assign("/auth"); }}>•••</button></div>
       </div>
     </aside>
 
