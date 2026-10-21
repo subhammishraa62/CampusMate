@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 import { buildRuleBasedBrief } from "@/lib/planning/engine";
 import type { DailyBrief } from "@/lib/planning/types";
 
@@ -77,6 +78,8 @@ export default function Home() {
   const [routeTransition, setRouteTransition] = useState<{ phase: "cover" | "reveal"; target: string; id: number } | null>(null);
   const routeTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const routeTransitionIdRef = useRef(0);
+  const [profileName, setProfileName] = useState("Student");
+  const [profileCourse, setProfileCourse] = useState("");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [resourceClasses, setResourceClasses] = useState<ResourceClassSession[]>([]);
   const [resourceCourses, setResourceCourses] = useState<ResourceCourse[]>([]);
@@ -158,6 +161,54 @@ export default function Home() {
   const visibleBrief = briefData ?? buildRuleBasedBrief(plannerTasks, briefContext);
   const completionRate = Math.round(doneCount / Math.max(tasks.length, 1) * 100);
   const estimatedOpenMinutes = tasks.filter((task) => !task.done).reduce((total, task) => total + estimateDurationMinutes(task.duration), 0);
+
+  // Load the currently authenticated user's display name and optional course.
+  // If Supabase is not configured or no user is signed in, keep the safe fallback.
+  useEffect(() => {
+    let active = true;
+
+    let supabase: ReturnType<typeof createClient>;
+    try {
+      supabase = createClient();
+    } catch {
+      return () => { active = false; };
+    }
+
+    function applyProfile(user: { user_metadata?: Record<string, unknown>; email?: string } | null) {
+      if (!active) return;
+      if (!user) {
+        setProfileName("Student");
+        setProfileCourse("");
+        return;
+      }
+
+      const metadata = user.user_metadata ?? {};
+      const displayName =
+        (typeof metadata.display_name === "string" && metadata.display_name.trim()) ||
+        (typeof metadata.full_name === "string" && metadata.full_name.trim()) ||
+        (typeof metadata.name === "string" && metadata.name.trim()) ||
+        user.email?.split("@")[0] ||
+        "Student";
+
+      setProfileName(displayName);
+      setProfileCourse(typeof metadata.course === "string" ? metadata.course.trim() : "");
+    }
+
+    void supabase.auth.getUser().then(({ data, error }) => {
+      if (active && !error) applyProfile(data.user);
+    }).catch(() => { /* Keep the safe fallback if auth is unavailable. */ });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      // Read the session user directly here; avoid making another auth request
+      // inside the auth-state callback.
+      applyProfile(session?.user ?? null);
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
 
   // A restrained pointer field gives the atmosphere a little depth on desktop.
   // It is decorative only and intentionally disabled for touch and reduced motion.
@@ -514,13 +565,13 @@ export default function Home() {
       <button className="nav-link secondary-nav" onClick={() => { setCommandOpen(true); setMobileNav(false); }}><span className="nav-number">06</span><span>AI command center</span></button>
       <div className="sidebar-bottom"><div className="handwritten-note"><span className="note-mark">A NOTE TO SELF</span><p>One thing at a time.<br/>You’re doing alright.</p><span className="note-line"/></div>
         <button className="nav-link settings-link" onClick={() => { setSettingsOpen(true); setMobileNav(false); }}><span className="nav-number">07</span><span>Preferences</span></button>
-        <div className="profile"><div className="profile-pic">S</div><div className="profile-info"><strong>Subham Mishra</strong><span>First year · CSE</span></div><button aria-label="Open account and cloud sync" title="Account and cloud sync" onClick={() => { window.location.assign("/auth"); }}>•••</button></div>
+        <div className="profile"><div className="profile-pic">{profileName.charAt(0).toUpperCase()}</div><div className="profile-info"><strong>{profileName}</strong>{profileCourse && <span>{profileCourse}</span>}</div><button aria-label="Open account and cloud sync" title="Account and cloud sync" onClick={() => { window.location.assign("/auth"); }}>•••</button></div>
       </div>
     </aside>
 
     <section className="main-area" id="top">
       <header className="topbar"><button className="mobile-menu" aria-label="Toggle navigation" onClick={() => setMobileNav(value => !value)}>MENU</button><div className="crumb"><span>My space</span><span className="crumb-slash">/</span><strong>{activeNav}</strong></div>
-        <div className="top-actions"><div className="date-chip"><span>{weekday.toUpperCase()}</span><b>{dateShort}</b></div><button className="top-text-button" onClick={() => announce("Search is coming soon")}>SEARCH</button><button className="top-text-button" onClick={() => announce("You’re all caught up")}>INBOX <span className="inbox-dot"/></button><div className="tiny-avatar">S</div>
+        <div className="top-actions"><div className="date-chip"><span>{weekday.toUpperCase()}</span><b>{dateShort}</b></div><button className="top-text-button" onClick={() => announce("Search is coming soon")}>SEARCH</button><button className="top-text-button" onClick={() => announce("You’re all caught up")}>INBOX <span className="inbox-dot"/></button><div className="tiny-avatar">{profileName.charAt(0).toUpperCase()}</div>
 
         </div>
       </header>
