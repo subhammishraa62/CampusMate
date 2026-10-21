@@ -1,0 +1,38 @@
+{
+  "name": "campusmate-ai-integration-command-center",
+  "version": "0.37.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "verify:mcp": "tsx scripts/verify-mcp.ts",
+    "smoke:planner": "tsx scripts/smoke-planner.ts",
+    "verify:resources": "node scripts/verify-resource-api.mjs",
+    "verify:local": "node scripts/verify-local-mode.mjs",
+    "verify:schedule-edit": "node scripts/verify-schedule-edit.mjs",
+    "verify:integrations": "node scripts/verify-integrations.mjs",
+    "verify:all": "npm run smoke:planner && npm run verify:resources && npm run verify:local && npm run verify:schedule-edit && npm run verify:integrations",
+    "test:bedrock": "tsx scripts/test-bedrock.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.0.0",
+    "@modelcontextprotocol/client": "^2.3.1",
+    "@modelcontextprotocol/server": "^2.3.1",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.109.0",
+    "lucide-react": "^0.468.0",
+    "next": "14.2.29",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
