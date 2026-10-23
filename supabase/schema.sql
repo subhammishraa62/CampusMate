@@ -18,6 +18,14 @@ create table if not exists public.profiles (
   display_name text not null default 'Student',
   course text not null default 'Student',
   year_of_study integer,
+  college text not null default '',
+  branch text not null default '',
+  semester text not null default '',
+  bio text not null default '',
+  study_goal_hours numeric not null default 3 check (study_goal_hours between 0.5 and 16),
+  preferred_start time not null default '17:00',
+  preferred_end time not null default '21:00',
+  avatar_url text not null default '',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -29,7 +37,13 @@ create table if not exists public.tasks (
   detail text not null default '' check (char_length(detail) <= 300),
   scheduled_time text not null default 'Not scheduled',
   duration text not null default '30 min',
-  priority text not null default 'Soon' check (priority in ('Today', 'Soon', 'Whenever')),
+  scheduled_date date,
+  start_time time,
+  end_time time,
+  deadline_date date,
+  deadline_time time,
+  reminder_minutes integer check (reminder_minutes is null or reminder_minutes in (0, 15, 30, 60, 1440)),
+  priority text not null default 'Medium' check (priority in ('Low', 'Medium', 'High')),
   is_done boolean not null default false,
   kind text not null default 'study' check (kind in ('study', 'class', 'life')),
   created_at timestamptz not null default now(),
@@ -47,6 +61,9 @@ create table if not exists public.courses (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.tasks
+  add column if not exists course_id uuid references public.courses(id) on delete set null;
 
 create table if not exists public.class_sessions (
   id uuid primary key default gen_random_uuid(),
@@ -117,6 +134,7 @@ create table if not exists public.ai_conversations (
 );
 
 create index if not exists tasks_user_updated_idx on public.tasks(user_id, updated_at desc);
+create index if not exists tasks_user_course_idx on public.tasks(user_id, course_id);
 create index if not exists class_sessions_user_start_idx on public.class_sessions(user_id, starts_at);
 create index if not exists study_sessions_user_started_idx on public.study_sessions(user_id, started_at desc);
 create index if not exists study_plans_user_date_idx on public.study_plans(user_id, plan_date desc);
@@ -174,6 +192,8 @@ alter table public.ai_conversations enable row level security;
 
 drop policy if exists "profiles_select_own" on public.profiles;
 create policy "profiles_select_own" on public.profiles for select to authenticated using (auth.uid() = id);
+drop policy if exists "profiles_insert_own" on public.profiles;
+create policy "profiles_insert_own" on public.profiles for insert to authenticated with check (auth.uid() = id);
 drop policy if exists "profiles_update_own" on public.profiles;
 create policy "profiles_update_own" on public.profiles for update to authenticated using (auth.uid() = id) with check (auth.uid() = id);
 

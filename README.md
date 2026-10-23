@@ -1,6 +1,97 @@
-# CampusMate AI v36 — Local-first learning space + planner integration
+# CampusMate AI — v56
 
-This version starts from the exact v31 Living Sky stylesheet and preserves the existing dashboard, themes, atmosphere, and transitions. It adds a real backend slice for the Alexa+ track using a **Streamable HTTP MCP server** and **Amazon Bedrock** for optional runtime AI. No OpenAI SDK or OpenAI API is used in this version.
+CampusMate combines Gemini-assisted planning with Tasks, Schedule, Courses & sessions, batch task review, duplicate protection, and a rules-based fallback.
+
+## Run locally
+
+- Copy `.env.example` to `.env.local` only if you do not already have an `.env.local` file. Preserve existing Supabase variables and add your Gemini API key privately.
+- Install dependencies with `npm install`.
+- Start with `npm run dev`, then open `http://localhost:3000`.
+- Never expose `GEMINI_API_KEY` to browser code or commit `.env.local` to source control.
+
+## v54 batch scheduling safeguards
+
+- Refreshes current courses and classes before planning.
+- Rechecks all batch times when requested.
+- Checks overlaps against classes, scheduled tasks, and previously accepted blocks in the current batch.
+- At final save, a conflicting proposed block is omitted while the task itself can still be created unscheduled.
+- Existing duplicates continue to be skipped.
+
+See `CHANGELOG-v54.md` for details.
+
+## v53 update
+
+This build keeps the v50 batch task planner and the v51/v52 Gemini failover/timeout work, with an additional fix for duplicate batch items and schedule validation. Existing duplicates show no new time block, inherit the existing course link where available, and are not reserved when scheduling later new tasks. New batch blocks are recalculated against saved classes and previously proposed blocks.
+
+Keep your existing `.env.local` private and copy it into this project folder. Run `npm install` if needed, then `npm run dev`. A full production build has not been completed in this environment; verify the app locally before the demo.
+
+# CampusMate AI v51 — Gemini failover, batch task planning, and duplicate protection
+
+This version preserves the existing dashboard, themes, student planner, and Streamable HTTP MCP endpoint. It supports **Google Gemini as an external AI provider**, optional Amazon Bedrock when available, and a rules-based fallback when no provider is configured. Gemini does not require AWS Bedrock access.
+
+## v51: Gemini model failover
+
+Gemini briefs and chat now make bounded attempts across the configured primary model and up to two alternate model IDs to handle temporary 429/503 responses. Default alternates are `gemini-3.5-flash-lite` and `gemini-3.8-flash`. If every candidate fails, CampusMate keeps the deterministic local fallback so the UI stays usable. Live provider availability still depends on Google's service capacity and your API key access.
+
+## v50: Batch task planning
+
+- Enter multiple task requests in one AI Command Center prompt. Planning Studio extracts up to eight explicit task actions.
+- Review each task title, deadline date/time, duration, course association, and proposed work block before saving.
+- Click **Recheck all times** after editing a deadline or duration. CampusMate recalculates proposed blocks around saved class sessions and existing scheduled tasks, including blocks for “tomorrow”.
+- **Create all tasks & schedule available blocks** creates the reviewed batch and schedules tasks with conflict-free blocks; tasks with no available slot are still added unscheduled. **Add all to Tasks only** keeps every new task flexible.
+- Existing duplicates are skipped, including completed tasks, and tasks are not created until a batch action is confirmed.
+- Run `npm run verify:batch-planning` for focused batch planner checks.
+
+## v49: Duplicate-safe AI task creation
+
+- Before displaying task-creation actions, Planning Studio checks whether the proposed assignment already exists, including completed tasks. It normalizes capitalization, punctuation, dash styles, and a trailing `Demo`/`Copy` label.
+- When a match exists, CampusMate hides the create-new-task buttons and offers to reopen/update the existing task and schedule, or view the existing task.
+- Explicitly different deadlines or course associations are treated as potentially separate occurrences.
+- The final task creation handler repeats the duplicate check to protect against accidental duplicate clicks.
+- Run `npm run verify:duplicate-prevention` to check the targeted examples.
+
+## v48: Show start–end ranges in Schedule
+
+- Scheduled tasks show an explicit range such as `7:00–9:00 PM` in the full Schedule timeline instead of only `7:00 PM` alongside `2 hrs`.
+- The Today dashboard shows compact start–end times, and scheduled task metadata shows the range while retaining duration.
+- Saved class entries carry their actual start and end times into the Schedule timeline.
+- This is a display enhancement; it does not modify stored schedules or AI behavior.
+
+## v47: Gemini requests stop hanging
+
+- Gemini calls time out after 15 seconds with automatic retries disabled for demo responsiveness.
+- Gemini 3.8 Flash uses low thinking effort, JSON output mode for planning briefs, and no unsupported temperature parameter.
+- The client stops waiting after 40 seconds and releases loading state with a clear message.
+- Provider errors log a sanitized status/code/message for troubleshooting; API-key-like values are redacted.
+
+## v46: Reliable Edit Class workflow
+
+- Fixed the Edit Class control so it scrolls directly to the class form instead of jumping to the top of the page.
+- The class editor now focuses the title field, highlights edit mode, and clearly explains that changes are not saved until Save changes is clicked.
+- Made Edit Class and Remove controls explicit buttons to avoid accidental form submission.
+- Keeps the existing class ID populated during editing so the form updates the selected session instead of adding a duplicate.
+
+## v45: Use Google Gemini without AWS Bedrock
+
+- Add `GEMINI_API_KEY` in `.env.local` to enable AI-generated daily briefs, MCP planning suggestions, and the Talk it through chat using Google Gemini.
+- Gemini is preferred when configured; if it fails, enabled Bedrock can be tried next; if no AI provider succeeds, CampusMate uses its deterministic planner.
+- The Gemini key is server-side only and must never use a `NEXT_PUBLIC_` prefix.
+- Task extraction and conflict-aware course/schedule linking continue to use CampusMate's validated local planner; AI recommendations do not silently create or change tasks.
+
+## v43: AI planning connected to Courses & sessions
+
+- The AI Command Center receives your saved courses and upcoming class sessions as separate planning context. The rules-based summary still reflects only your own prompt.
+- When an academic request clearly matches a saved course (e.g. “physics assignment” with an Applied Physics course), CampusMate preselects that course in the task preview. The student can change the association or leave it as a general task before saving. Ambiguous course matches are not guessed.
+- Proposed focus blocks avoid conflicts with saved class sessions and existing scheduled tasks. Accepted tasks show their course in Tasks and Schedule and persist the link in browser storage or Supabase.
+- Existing Supabase projects must run `supabase/migrations/20261023_task_course_links.sql` once before using course-linked tasks.
+
+## v42: AI Planning Studio → Tasks → Schedule
+
+- Enter a concrete task request in the AI Command Center, for example: “I have to complete my physics assignment by 10 PM today. It will take around two hours.”
+- After CampusMate generates the plan, review the detected task, deadline, work duration, and conflict-aware suggested time. Nothing is created until you confirm.
+- Choose **Create task & schedule block** to add a scheduled task that appears in both Tasks and the Schedule timeline, or **Add to Tasks only** to keep it flexible.
+- If the request doesn't contain a specific task, CampusMate leaves it as a planning suggestion rather than inventing one.
+- Test extraction and scheduling with `npm run verify:task-intent`.
 
 ## What's included
 
@@ -9,7 +100,7 @@ This version starts from the exact v31 Living Sky stylesheet and preserves the e
 - Self-hosted MCP server at `POST/GET/DELETE /api/mcp` over Streamable HTTP, using the current MCP TypeScript SDK server package. It supports the current protocol era and stateless legacy clients including the hackathon's minimum MCP version.
 - Five MCP tools: `get_today_overview`, `list_tasks`, `get_schedule`, `suggest_daily_plan`, and confirmation-gated `update_task`.
 - An in-app **Run Alexa+ MCP test** control. It creates a real MCP client, completes the protocol handshake, lists tools, and calls tools over HTTP using the MCP client SDK. It is not a mocked button animation.
-- Supabase SSR authentication and owner-scoped cloud task sync, plus authenticated CRUD API routes for courses, class sessions, study sessions, and saved study plans. The `/resources` workspace works in two explicit modes: cloud-backed for a signed-in student with Supabase configured, or browser-local demo mode when Supabase is unavailable. Local mode supports create/edit/delete courses, create/edit/delete classes, start/finish focus sessions, create/edit/accept/archive/delete plans, and export a JSON backup. Course and schedule actions are now high-contrast pill buttons with accessible labels; the schedule uses an explicit **EDIT CLASS** control that loads the selected entry back into the form, and action controls wrap below the details on small screens.
+- Supabase SSR authentication and owner-scoped cloud task sync, plus authenticated CRUD API routes for courses, class sessions, study sessions, and saved study plans. The `/resources` workspace works in two explicit modes: cloud-backed for a signed-in student with Supabase configured, or browser-local demo mode when Supabase is unavailable. Local mode supports create/edit/delete courses, create/edit/delete classes, start/finish focus sessions, create/edit/accept/archive/delete plans, and export a JSON backup. Course and schedule actions are now high-contrast pill buttons with accessible labels; the schedule uses an explicit **EDIT CLASS** control that loads the selected entry back into the form and scrolls directly to it, and action controls wrap below the details on small screens.
 - Saved class sessions now appear in the dashboard's data-driven schedule and today's planner input. Fixed classes are treated as commitments to protect rather than tasks to start, including days with no flexible task remaining.
 - Health/configuration endpoint at `/api/health`.
 - Safe deterministic fallback if Bedrock is disabled, unavailable, or returns invalid output.
@@ -46,8 +137,9 @@ Then open `http://localhost:3000`. Without AWS and Supabase configuration, the d
    BEDROCK_ENABLED=false
    ```
 
-4. Keep `BEDROCK_ENABLED=false` until the connectivity test succeeds. Confirm that the model is available to your account in that region and that the identity has permission to invoke it (including `bedrock:InvokeModel`).
-5. Run `npm run test:bedrock` to send a small real Converse request. If it succeeds, set `BEDROCK_ENABLED=true` and restart `npm run dev`. Then, in Today → Daily Intelligence, click **Refresh intelligence**. When Bedrock is configured and the call succeeds, the engine badge changes to `BEDROCK-ASSISTED` and the note identifies the region/model. If Bedrock cannot be used, the endpoint falls back to the rules-based brief and shows a safe explanation.
+4. **To use AI without AWS:** create a Gemini API key at https://aistudio.google.com/apikey, then add `GEMINI_API_KEY=your_key`, `GEMINI_MODEL_ID=gemini-3.5-flash-lite`, and optionally `GEMINI_FALLBACK_MODEL_IDS=gemini-3.6-flash,gemini-3.8-flash` to `.env.local`. Restart `npm run dev`. CampusMate will use Gemini for AI-generated planning briefs, MCP planning suggestions, and Talk it through chat; the planning UI indicates `GEMINI-ASSISTED` when successful. Check current model access, rate limits, and pricing at Google AI Studio.
+5. Keep the Gemini key server-side; never use a `NEXT_PUBLIC_` prefix or commit `.env.local`. The no-cost Gemini tier has limitations and Google's pricing page says content submitted under the free tier may be used to improve products, so use synthetic demo information rather than sensitive student data.
+6. Amazon Bedrock is still optional: keep `BEDROCK_ENABLED=false` while access is blocked. If you later regain access, configure AWS credentials and model access, then set `BEDROCK_ENABLED=true`. Gemini is preferred if `GEMINI_API_KEY` is configured; Bedrock is tried as a fallback if Gemini fails and Bedrock is enabled. If both fail or neither is configured, CampusMate uses its deterministic local planner.
 
 The default is Amazon Nova 2 Lite through the Global cross-Region inference profile (`global.amazon.nova-2-lite-v1:0`) initiated from Mumbai (`ap-south-1`). Global inference can route requests to supported AWS Regions worldwide; do not use this profile if you require strict India-only processing. A model change will not bypass an account-level Bedrock restriction. Use `npm run test:bedrock` to make a real test request after setting up authentication and permissions; it may incur a small usage charge. Availability, pricing, IAM permission, and account access must still be verified in your AWS account. AWS SDK credentials are read server-side through the normal credential provider chain; no AWS credentials are exposed through `NEXT_PUBLIC_*` variables or sent to the browser.
 
@@ -68,6 +160,11 @@ Official AWS references:
 3. Open the Supabase SQL Editor and run `supabase/schema.sql`.
 4. In Supabase Authentication settings, set the local Site URL to `http://localhost:3000`. Configure email confirmation according to your demo needs.
 5. Restart the development server, open the account control at the bottom of the CampusMate sidebar, and sign in. When a valid session exists, `/api/tasks` loads and syncs tasks belonging to that user, subject to Row Level Security policies.
+
+
+### v43: connect planner tasks to saved courses
+
+For an existing Supabase project, open the SQL Editor and run `supabase/migrations/20261023_task_course_links.sql` once before updating the app. This adds a nullable `tasks.course_id` foreign key; it does not delete or rewrite existing tasks. Fresh installs using `supabase/schema.sql` get the column automatically. After applying it, restart the dev server. In AI Command Center, a clear subject match (for example, “finish my physics assignment”) is linked to a matching saved course when possible; review or change the course in the proposal before creating the task. The planner also receives upcoming class-session context and avoids overlaps with saved class commitments.
 
 ### Manage courses, classes, focus sessions, and plans
 
@@ -119,7 +216,7 @@ Official MCP references:
 ## Endpoints
 
 - `GET /api/health` — reports configuration flags only; it does not prove credentials work.
-- `POST /api/intelligence-brief` — validates a task snapshot and returns a Bedrock-assisted brief or a deterministic rules-based fallback.
+- `POST /api/intelligence-brief` — validates a task snapshot and returns a Gemini- or Bedrock-assisted brief, with deterministic rules-based fallback.
 - `GET /api/tasks` / `PUT /api/tasks` — authenticated, owner-scoped Supabase task sync.
 - `GET/POST/PATCH/DELETE /api/courses` — authenticated course CRUD.
 - `GET/POST/PATCH/DELETE /api/class-sessions` — authenticated class schedule CRUD; validates time ranges and course ownership.
@@ -144,7 +241,7 @@ Manual browser checks:
 1. Run `npm run smoke:planner` and confirm it prints `PASS`.
 2. Open Today and click **Run Alexa+ MCP test**. Look for `STREAMABLE HTTP · CONNECTED` and three successful tool calls.
 3. Click **Refresh intelligence** with Bedrock disabled; expect a deterministic brief and a note explaining how to enable Bedrock.
-4. Configure AWS credentials and enable Bedrock; click refresh again and verify that the badge says `BEDROCK-ASSISTED` if the model call succeeds.
+4. Configure `GEMINI_API_KEY`, restart the dev server, then click refresh and verify that the badge says `GEMINI-ASSISTED`.
 5. Change a task, then run the MCP test again to confirm the plan uses the current visible task snapshot.
 6. After Supabase is configured, use the resource API endpoints to create a course, class session, study session, and saved plan; verify each remains after refresh and cannot be accessed by a different account.
 7. Check Sky Purple/Daylight and switch all tabs to ensure the visual foundation is intact.
@@ -197,7 +294,7 @@ All these routes use the signed-in user's Supabase session and filter reads/upda
 ## Current limitations (intentional and documented)
 
 - The planning engine handles task priorities and duration heuristics; it does not invent hard deadlines or assert that it has full calendar availability.
-- Bedrock runtime calls require AWS credentials, model access in the selected region, and `BEDROCK_ENABLED=true`; those settings are not included in the ZIP.
+- Gemini and Bedrock credentials are not included in the ZIP. Set `GEMINI_API_KEY` in `.env.local` to use Gemini without AWS; Bedrock still requires AWS credentials, model access, and `BEDROCK_ENABLED=true`.
 - The MCP server is real and uses Streamable HTTP, but non-authenticated external callers are limited to the demo workspace. A production multi-user Alexa+ setup needs per-user authorization and durable storage for remote tool calls.
 - The existing Planning Studio conversational panel still contains frontend demo interactions; the Daily Intelligence Brief and MCP tools are the wired server-side intelligence slice in this version.
 - The account, task-sync, and resource APIs need your own Supabase project configuration before cloud persistence will activate. The resource management UI is available at `/resources`; authenticated database behavior still needs to be verified against your own project.
@@ -207,3 +304,36 @@ All these routes use the signed-in user's Supabase session and filter reads/upda
 Visit `/integrations` for safe, read-only status checks across Supabase configuration/session/core table access and honest Bedrock/MCP readiness notes. The endpoint never returns table row contents or raw database errors. Use `npm run verify:integrations` for static checks and `npm run verify:all` for the local static suite.
 
 **Alexa+ status:** Streamable HTTP and local tools exist, but the shared-token starter does not implement Alexa+'s current OAuth 2.1 + PKCE/account-linking requirements. Review `docs/ALEXAPLUS_MCP_READINESS.md` before remote deployment. Do not treat local MCP success as proof of Alexa+ connectivity.
+
+
+## Student experience v38 updates
+
+This build adds Low/Medium/High priorities, planned work date and start/end time pickers, separate deadline date/time, configurable browser reminders, a customizable per-user profile and avatar upload, quote rotation, a compact Today page with an integrated course/class preview, and removal of technical Integration Health from the main navigation.
+
+For an existing Supabase project, apply `supabase/migrations/20261023_profile_deadlines_priorities.sql` before expecting the new fields to cloud-sync. Browser deadline notifications require CampusMate to remain open and browser permission; closed-app push reminders are not configured.
+
+
+## v44 Daylight scrollbar polish
+
+Scrollbars follow the selected interface theme throughout the document, sidebar, task editor, profile modal, and nested scroll areas. Daylight uses a muted blue-grey thumb/track; Sky Purple uses lavender over a deep violet track. Avoid hard-coded scrollbar colors in component-specific styles; use `--cm-scrollbar-thumb`, `--cm-scrollbar-thumb-hover`, and `--cm-scrollbar-track` instead.
+
+## v48 schedule display
+The Schedule timeline now displays explicit time ranges when a scheduled task or saved class includes both start and end times. For example, a two-hour task starting at 7 PM appears as `7:00–9:00 PM`, with its duration retained separately.
+
+## v52: Fix Gemini minimum-deadline errors
+
+- Gemini's SDK HTTP timeout is now 12 seconds (above the API's 10-second minimum) for both planning briefs and chat.
+- The browser waits up to 40 seconds, enough for the app's bounded three-model failover chain to return or fall back rather than cutting the chain off at 25 seconds.
+- The rules-based fallback remains available if Gemini models return temporary overload errors. A 503 still means the provider may be temporarily unavailable; this fix removes the invalid short-deadline 400 error, not provider outages.
+- Added a regression check that the Gemini timeout stays at or above 10 seconds.
+
+
+## v56: Gemini recovery and merged source
+
+- Defaults to `gemini-3.5-flash-lite`, currently listed by Google as a stable high-throughput model, and falls back across `gemini-3.6-flash` and `gemini-3.8-flash`.
+- Adds one bounded retry with backoff for transient `408`, `429`, `500`, `502`, `503`, and `504` errors, then tries alternate models.
+- Keeps the rules-based planner as a safe fallback if all provider models are unavailable. A Google-side `503 UNAVAILABLE` may still persist across models.
+- Preserves the existing repository history; this release ZIP intentionally excludes `.env.local`, `node_modules`, and `.next`.
+
+## v55 batch scheduling note
+Batch planning now reserves all saved task calendar blocks (including completed tasks whose scheduled block remains visible) and searches later available dates when no conflict-free block fits today. Review all times before confirming batch creation.

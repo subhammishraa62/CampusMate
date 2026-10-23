@@ -1,9 +1,9 @@
 import type { DailyBrief, PlannerTask } from "./types";
 
 const priorityScore: Record<PlannerTask["priority"], number> = {
-  Today: 0,
-  Soon: 1,
-  Whenever: 2,
+  High: 0,
+  Medium: 1,
+  Low: 2,
 };
 
 function durationMinutes(value: string): number {
@@ -17,7 +17,17 @@ function durationMinutes(value: string): number {
 export function buildRuleBasedBrief(tasks: PlannerTask[], context = ""): DailyBrief {
   const openTasks = tasks.filter((task) => !task.done);
   const flexibleTasks = openTasks.filter((task) => task.kind !== "class");
+  const deadlineUrgency = (task: PlannerTask) => {
+    if (!task.deadlineDate) return 3;
+    const fallbackTime = task.deadlineTime || "23:59";
+    const deadline = new Date(`${task.deadlineDate}T${fallbackTime}:00`).getTime();
+    if (!Number.isFinite(deadline)) return 3;
+    const hoursLeft = (deadline - Date.now()) / 3_600_000;
+    return hoursLeft <= 24 ? 0 : hoursLeft <= 48 ? 1 : 2;
+  };
   const ordered = [...flexibleTasks].sort((a, b) => {
+    const deadlineDelta = deadlineUrgency(a) - deadlineUrgency(b);
+    if (deadlineDelta !== 0) return deadlineDelta;
     const priorityDelta = priorityScore[a.priority] - priorityScore[b.priority];
     if (priorityDelta !== 0) return priorityDelta;
     return durationMinutes(a.duration) - durationMinutes(b.duration);
@@ -26,7 +36,7 @@ export function buildRuleBasedBrief(tasks: PlannerTask[], context = ""): DailyBr
   // the student's next action. If no flexible task remains, say that clearly.
   const priorityTask = ordered[0] ?? null;
   const onlyFixedCommitments = openTasks.length > 0 && flexibleTasks.length === 0;
-  const urgentCount = openTasks.filter((task) => task.priority === "Today").length;
+  const urgentCount = openTasks.filter((task) => task.priority === "High").length;
   const studyCount = openTasks.filter((task) => task.kind === "study").length;
   const doneCount = tasks.length - openTasks.length;
   const contextLine = context.trim();
@@ -35,14 +45,17 @@ export function buildRuleBasedBrief(tasks: PlannerTask[], context = ""): DailyBr
     ? "Your list is clear. Keep the space open, or use a little of it for rest and a quick look at tomorrow."
     : onlyFixedCommitments
       ? `You have ${openTasks.length} fixed ${openTasks.length === 1 ? "commitment" : "commitments"} left. Keep those times protected and leave a little room around them.`
-      : `You have ${openTasks.length} open ${openTasks.length === 1 ? "item" : "items"}${urgentCount ? `, including ${urgentCount} marked for today` : ""}. Protect fixed commitments first, then give one flexible task your attention.`;
+      : `You have ${openTasks.length} open ${openTasks.length === 1 ? "item" : "items"}${urgentCount ? `, including ${urgentCount} high-priority` : ""}. Protect fixed commitments first, then give one flexible task your attention.`;
 
   let reason = "Start with one manageable step, then reassess instead of trying to solve the whole day at once.";
   if (onlyFixedCommitments) {
     reason = "Your remaining items are fixed commitments. Keep their scheduled times protected, allow for transitions, and use only the open windows around them for flexible work or rest.";
-  } else if (priorityTask?.priority === "Today") {
-    reason = `You marked this for today${priorityTask.kind === "study" ? ", and it is an academic task" : ""}. Giving it a focused block now reduces the number of urgent decisions later.`;
-  } else if (priorityTask?.priority === "Soon") {
+  } else if (priorityTask?.deadlineDate) {
+    const dueToday = priorityTask.deadlineDate === new Date().getFullYear().toString() + "-" + String(new Date().getMonth()+1).padStart(2,"0") + "-" + String(new Date().getDate()).padStart(2,"0");
+    reason = dueToday ? `This task has a deadline today${priorityTask.deadlineTime ? ` at ${priorityTask.deadlineTime}` : ""}. Give it a realistic block and keep fixed commitments protected.` : `This task has the closest deadline in your list (${priorityTask.deadlineDate}${priorityTask.deadlineTime ? ` at ${priorityTask.deadlineTime}` : ""}). Plan around that before lower-urgency work.`;
+  } else if (priorityTask?.priority === "High") {
+    reason = `You marked this as high priority${priorityTask.kind === "study" ? ", and it is an academic task" : ""}. Giving it a focused block now reduces the number of urgent decisions later.`;
+  } else if (priorityTask?.priority === "Medium") {
     reason = "Nothing else in your open list has a higher priority. A small start now can keep this from becoming tomorrow's rush.";
   } else if (!priorityTask) {
     reason = "There is no unfinished task to push forward. Protect the breathing room rather than adding busywork.";
@@ -96,7 +109,7 @@ export function sanitizePlannerTasks(value: unknown): PlannerTask[] {
     const task = raw as Record<string, unknown>;
     const title = typeof task.title === "string" ? task.title.trim().slice(0, 180) : "";
     if (!title) throw new Error(`Task ${index + 1} needs a title.`);
-    const priority = task.priority === "Today" || task.priority === "Soon" || task.priority === "Whenever" ? task.priority : "Soon";
+    const priority = task.priority === "Low" || task.priority === "Medium" || task.priority === "High" ? task.priority : task.priority === "Today" ? "High" : task.priority === "Whenever" ? "Low" : "Medium";
     const kind = task.kind === "class" || task.kind === "life" || task.kind === "study" ? task.kind : "study";
     return {
       id: typeof task.id === "string" || typeof task.id === "number" ? String(task.id).slice(0, 80) : String(index + 1),
@@ -107,6 +120,13 @@ export function sanitizePlannerTasks(value: unknown): PlannerTask[] {
       priority,
       done: task.done === true,
       kind,
+      scheduledDate: typeof task.scheduledDate === "string" ? task.scheduledDate.slice(0, 10) : "",
+      startTime: typeof task.startTime === "string" ? task.startTime.slice(0, 5) : "",
+      endTime: typeof task.endTime === "string" ? task.endTime.slice(0, 5) : "",
+      deadlineDate: typeof task.deadlineDate === "string" ? task.deadlineDate.slice(0, 10) : "",
+      deadlineTime: typeof task.deadlineTime === "string" ? task.deadlineTime.slice(0, 5) : "",
+      reminderMinutes: typeof task.reminderMinutes === "number" ? task.reminderMinutes : null,
+      courseId: typeof task.courseId === "string" ? task.courseId.slice(0, 80) : null,
     };
   });
 }

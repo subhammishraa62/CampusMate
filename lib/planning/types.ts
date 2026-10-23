@@ -1,4 +1,4 @@
-export type PlannerPriority = "Today" | "Soon" | "Whenever";
+export type PlannerPriority = "Low" | "Medium" | "High";
 export type PlannerKind = "study" | "class" | "life";
 
 export type PlannerTask = {
@@ -10,6 +10,13 @@ export type PlannerTask = {
   priority: PlannerPriority;
   done: boolean;
   kind: PlannerKind;
+  scheduledDate?: string;
+  startTime?: string;
+  endTime?: string;
+  deadlineDate?: string;
+  deadlineTime?: string;
+  reminderMinutes?: number | null;
+  courseId?: string | null;
 };
 
 export type BriefPlanItem = {

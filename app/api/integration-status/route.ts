@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseConfig } from "@/lib/supabase/config";
+import { getGeminiConfiguration } from "@/lib/gemini/daily-brief";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -15,6 +16,7 @@ type TableCheck = { status: "ok" | "error" | "not_checked"; hint?: string };
  */
 export async function GET() {
   const config = getSupabaseConfig();
+  const gemini = getGeminiConfiguration();
   const bedrockEnabled = process.env.BEDROCK_ENABLED === "true";
   const bedrockModelId = process.env.BEDROCK_MODEL_ID || "global.amazon.nova-2-lite-v1:0";
   const bedrockRegion = process.env.AWS_REGION || "ap-south-1";
@@ -23,6 +25,7 @@ export async function GET() {
   const base: {
     checkedAt: string;
     supabase: { configured: boolean; authenticated: boolean; authStatus: string; tables: Record<TableName, TableCheck> };
+    gemini: { enabled: boolean; modelId: string; note: string };
     bedrock: { enabled: boolean; modelId: string; region: string; credentialOrInvocationTested: boolean; note: string };
     mcp: { endpoint: string; transport: string; sharedTokenConfigured: boolean; remoteAlexaPlusReady: boolean; note: string };
   } = {
@@ -32,6 +35,11 @@ export async function GET() {
       authenticated: false,
       authStatus: config ? "not_checked" as const : "needs_configuration" as const,
       tables: Object.fromEntries(tableNames.map((name) => [name, { status: "not_checked" as const }])) as Record<TableName, TableCheck>,
+    },
+    gemini: {
+      enabled: gemini.enabled,
+      modelId: gemini.modelId,
+      note: gemini.enabled ? "API key is configured; this read-only request does not call the model." : "Not configured. Add GEMINI_API_KEY to enable external AI without AWS.",
     },
     bedrock: {
       enabled: bedrockEnabled,

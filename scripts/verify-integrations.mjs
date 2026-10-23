@@ -22,8 +22,8 @@ assert.match(page, /read-only checks/i, "UI must explain diagnostics are read-on
 assert.ok(page.includes(quickstart), "UI should link the official Alexa+ MCP requirements");
 assert.match(page, /npm run test:bedrock/, "UI should provide an explicit real Bedrock test command");
 assert.match(page, /npm run verify:mcp/, "UI should provide an explicit MCP test command");
-assert.match(home, /href="\/integrations"/, "dashboard must link to the integration command center");
+assert.doesNotMatch(home, /href="\/integrations"/, "technical integration diagnostics should not clutter the student dashboard navigation");
 assert.ok(pkg.scripts["verify:integrations"], "package should expose integration verifier");
 assert.match(css, /Integration Command Center/, "integration command center styles should exist");
 
-console.log("PASS: diagnostics are read-only, no-store, minimal-data, core-table aware, linked from dashboard, and honest about Alexa+/Bedrock readiness");
+console.log("PASS: diagnostics are read-only, no-store, minimal-data, core-table aware, reachable by direct route but hidden from student dashboard navigation, and honest about Alexa+/Bedrock readiness");

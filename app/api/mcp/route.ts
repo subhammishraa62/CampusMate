@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { createMcpHandler, hostHeaderValidationResponse, originValidationResponse, McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { buildBedrockBrief, isBedrockEnabled } from "@/lib/bedrock/daily-brief";
+import { buildGeminiBrief } from "@/lib/gemini/daily-brief";
 import { buildRuleBasedBrief, sanitizePlannerTasks } from "@/lib/planning/engine";
 import type { PlannerTask, PlannerPriority } from "@/lib/planning/types";
 import { createClient as createSupabaseServerClient } from "@/lib/supabase/server";
@@ -15,18 +16,24 @@ const plannerTaskInputSchema = z.object({
   detail: z.string().max(300).optional(),
   time: z.string().max(40).optional(),
   duration: z.string().max(40).optional(),
-  priority: z.enum(["Today", "Soon", "Whenever"]).optional(),
+  priority: z.enum(["Low", "Medium", "High"]).optional(),
   done: z.boolean().optional(),
   kind: z.enum(["study", "class", "life"]).optional(),
+  scheduledDate: z.string().max(10).optional(),
+  startTime: z.string().max(5).optional(),
+  endTime: z.string().max(5).optional(),
+  deadlineDate: z.string().max(10).optional(),
+  deadlineTime: z.string().max(5).optional(),
+  reminderMinutes: z.number().int().min(0).max(1440).nullable().optional(),
 });
 const plannerTaskArraySchema = z.array(plannerTaskInputSchema).max(40).optional();
 type Workspace = { tasks: PlannerTask[]; source: string };
 
 const seedTasks: PlannerTask[] = [
-  { id: "1", title: "Finish DSA assignment", detail: "Data Structures · BSTs", time: "10:30 AM", duration: "35 min", priority: "Today", done: false, kind: "study" },
-  { id: "2", title: "Physics lecture", detail: "Block C · Room 204", time: "11:30 AM", duration: "1 hr", priority: "Today", done: false, kind: "class" },
-  { id: "3", title: "Submit lab observation", detail: "Applied Physics · Due today", time: "1:00 PM", duration: "25 min", priority: "Today", done: false, kind: "study" },
-  { id: "4", title: "Lunch away from my desk", detail: "A proper break, not another tab", time: "1:30 PM", duration: "40 min", priority: "Whenever", done: false, kind: "life" },
+  { id: "1", title: "Finish DSA assignment", detail: "Data Structures · BSTs", time: "10:30 AM", duration: "35 min", priority: "High", done: false, kind: "study" },
+  { id: "2", title: "Physics lecture", detail: "Block C · Room 204", time: "11:30 AM", duration: "1 hr", priority: "High", done: false, kind: "class" },
+  { id: "3", title: "Submit lab observation", detail: "Applied Physics · Due today", time: "1:00 PM", duration: "25 min", priority: "High", done: false, kind: "study" },
+  { id: "4", title: "Lunch away from my desk", detail: "A proper break, not another tab", time: "1:30 PM", duration: "40 min", priority: "Low", done: false, kind: "life" },
 ];
 type CampusMateGlobal = typeof globalThis & { __campusMateMcpDemoTasks?: PlannerTask[] };
 const globalForCampusMate = globalThis as CampusMateGlobal;
@@ -44,7 +51,13 @@ function fromDatabaseRow(row: Record<string, unknown>): PlannerTask {
     detail: String(row.detail ?? ""),
     time: String(row.scheduled_time ?? "Not scheduled"),
     duration: String(row.duration ?? "30 min"),
-    priority: row.priority === "Today" || row.priority === "Soon" || row.priority === "Whenever" ? row.priority : "Soon",
+    priority: row.priority === "Low" || row.priority === "Medium" || row.priority === "High" ? row.priority : row.priority === "Today" ? "High" : row.priority === "Whenever" ? "Low" : "Medium",
+    scheduledDate: typeof row.scheduled_date === "string" ? row.scheduled_date : "",
+    startTime: typeof row.start_time === "string" ? row.start_time : "",
+    endTime: typeof row.end_time === "string" ? row.end_time : "",
+    deadlineDate: typeof row.deadline_date === "string" ? row.deadline_date : "",
+    deadlineTime: typeof row.deadline_time === "string" ? row.deadline_time : "",
+    reminderMinutes: typeof row.reminder_minutes === "number" ? row.reminder_minutes : null,
     done: row.is_done === true,
     kind: row.kind === "class" || row.kind === "life" || row.kind === "study" ? row.kind : "study",
   };
@@ -57,7 +70,7 @@ async function readAuthenticatedWorkspace(): Promise<{ tasks: PlannerTask[]; sup
     const { data: userData, error: userError } = await supabase.auth.getUser();
     if (userError || !userData.user) return null;
     const { data, error } = await supabase.from("tasks")
-      .select("id,title,detail,scheduled_time,duration,priority,is_done,kind")
+      .select("id,title,detail,scheduled_time,duration,priority,is_done,kind,scheduled_date,start_time,end_time,deadline_date,deadline_time,reminder_minutes")
       .eq("user_id", userData.user.id)
       .order("created_at", { ascending: true });
     if (error) return null;
@@ -96,20 +109,20 @@ function buildServer() {
   const server = new McpServer({ name: "campusmate-ai", version: "33.0.0" }, { capabilities: { tools: {} } });
 
   server.registerTool("get_today_overview", {
-    description: "Summarise open tasks, completed items, today-priority items, and CampusMate's best starting point. Optionally pass the task snapshot currently visible in the app.",
+    description: "Summarise open tasks, completed items, high-priority items, and CampusMate's best starting point. Optionally pass the task snapshot currently visible in the app.",
     inputSchema: z.object({ tasks: plannerTaskArraySchema }),
   }, async ({ tasks: suppliedTasks }) => {
     const workspace = await getWorkspace(suppliedTasks);
     const open = workspace.tasks.filter((task) => !task.done);
     const complete = workspace.tasks.length - open.length;
-    const todayCount = open.filter((task) => task.priority === "Today").length;
+    const highCount = open.filter((task) => task.priority === "High").length;
     const brief = buildRuleBasedBrief(workspace.tasks);
     return result({
       source: workspace.source,
       totalTasks: workspace.tasks.length,
       openTasks: open.length,
       completedTasks: complete,
-      priorityToday: todayCount,
+      highPriorityCount: highCount,
       nextBestMove: brief.priorityTitle,
       recommendationReason: brief.reason,
       note: "This is a planning snapshot, not a calendar-provider feed.",
@@ -144,15 +157,20 @@ function buildServer() {
   });
 
   server.registerTool("suggest_daily_plan", {
-    description: "Create a feasible first-draft daily plan from task priorities and the student's context. Uses Amazon Bedrock when enabled and available, otherwise the deterministic CampusMate planning engine.",
+    description: "Create a feasible first-draft daily plan from task priorities and the student's context. Uses Google Gemini when configured, then Amazon Bedrock if enabled, otherwise the deterministic CampusMate planning engine.",
     inputSchema: z.object({ tasks: plannerTaskArraySchema, context: z.string().max(600).optional() }),
   }, async ({ tasks: suppliedTasks, context = "" }) => {
     const workspace = await getWorkspace(suppliedTasks);
-    const bedrock = await buildBedrockBrief(workspace.tasks, context);
-    const brief = bedrock.brief ?? buildRuleBasedBrief(workspace.tasks, context);
+    const gemini = await buildGeminiBrief(workspace.tasks, context);
+    const bedrock = !gemini.brief && isBedrockEnabled()
+      ? await buildBedrockBrief(workspace.tasks, context)
+      : { brief: null, status: "disabled" as const };
+    const brief = gemini.brief ?? bedrock.brief ?? buildRuleBasedBrief(workspace.tasks, context);
+    const provider = gemini.brief ? "Google Gemini" : bedrock.brief ? "Amazon Bedrock" : "CampusMate rules-based planner";
     return result({
       source: workspace.source,
-      provider: bedrock.status === "ready" ? "Amazon Bedrock" : "CampusMate rules-based planner",
+      provider,
+      geminiStatus: gemini.status,
       bedrockStatus: bedrock.status,
       brief,
       requiresStudentApproval: true,
@@ -165,7 +183,7 @@ function buildServer() {
     inputSchema: z.object({
       taskId: z.string().min(1).max(80),
       done: z.boolean().optional(),
-      priority: z.enum(["Today", "Soon", "Whenever"]).optional(),
+      priority: z.enum(["Low", "Medium", "High"]).optional(),
       confirmed: z.boolean().optional(),
     }),
   }, async ({ taskId, done, priority, confirmed = false }) => {
@@ -193,7 +211,7 @@ function buildServer() {
         .update(databaseUpdate)
         .eq("user_id", authenticated.userId)
         .eq("id", taskId)
-        .select("id,title,detail,scheduled_time,duration,priority,is_done,kind")
+        .select("id,title,detail,scheduled_time,duration,priority,is_done,kind,scheduled_date,start_time,end_time,deadline_date,deadline_time,reminder_minutes")
         .single();
       if (error || !data) return result({ ok: false, error: "The task was not saved. Check that the task belongs to the signed-in account." });
       return result({ ok: true, persistence: "Supabase", task: fromDatabaseRow(data as Record<string, unknown>), note: "Approved update saved to the authenticated user's task row." });

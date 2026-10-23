@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { buildRuleBasedBrief, sanitizePlannerTasks } from "@/lib/planning/engine";
 import type { DailyBrief, PlannerTask } from "@/lib/planning/types";
 import { buildBedrockBrief, getBedrockConfiguration, isBedrockEnabled } from "@/lib/bedrock/daily-brief";
+import { buildGeminiBrief, getGeminiConfiguration, isGeminiEnabled } from "@/lib/gemini/daily-brief";
 import { getSupabaseConfig } from "@/lib/supabase/config";
 import { createClient as createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -52,48 +53,66 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid task list." }, { status: 400 });
   }
   const context = typeof input.context === "string" ? input.context.trim().slice(0, 600) : "";
-  const config = getBedrockConfiguration();
-  let canUseBedrock = isBedrockEnabled();
+  const learningContext = typeof input.learningContext === "string" ? input.learningContext.trim().slice(0, 500) : "";
+  const modelContext = [context, learningContext].filter(Boolean).join("\n\n").slice(0, 1100);
+  const bedrockConfig = getBedrockConfiguration();
+  const geminiConfig = getGeminiConfiguration();
+  const canUseExternalAI = isGeminiEnabled() || isBedrockEnabled();
   let authRequired = false;
 
-  // On production deployments, model calls are limited to signed-in students.
-  if (canUseBedrock && process.env.NODE_ENV === "production") {
+  // In production, do not turn this route into an anonymous external model proxy.
+  if (canUseExternalAI && process.env.NODE_ENV === "production") {
     if (!getSupabaseConfig()) {
-      canUseBedrock = false;
       authRequired = true;
     } else {
       try {
         const supabase = await createSupabaseServerClient();
         const { data, error } = supabase ? await supabase.auth.getUser() : { data: { user: null }, error: null };
-        if (error || !data.user) {
-          canUseBedrock = false;
-          authRequired = true;
-        }
+        if (error || !data.user) authRequired = true;
       } catch {
-        canUseBedrock = false;
         authRequired = true;
       }
     }
   }
 
   let aiBrief: DailyBrief | null = null;
+  let providerUsed: "Google Gemini" | "Amazon Bedrock" | null = null;
+  let geminiStatus: "disabled" | "ready" | "unavailable" = "disabled";
+  let geminiModelUsed: string | null = null;
   let bedrockStatus: "disabled" | "ready" | "unavailable" = "disabled";
-  if (canUseBedrock) {
-    const result = await buildBedrockBrief(tasks, context);
-    aiBrief = result.brief;
+
+  // Prefer Gemini when configured; fall back to Bedrock if it is also enabled,
+  // then to the deterministic local planner. No AWS setup is needed for Gemini.
+  if (!authRequired && isGeminiEnabled()) {
+    const result = await buildGeminiBrief(tasks, modelContext);
+    geminiStatus = result.status;
+    if (result.brief) {
+      aiBrief = result.brief;
+      providerUsed = "Google Gemini";
+      geminiModelUsed = result.modelId || geminiConfig.modelId;
+    }
+  }
+  if (!authRequired && !aiBrief && isBedrockEnabled()) {
+    const result = await buildBedrockBrief(tasks, modelContext);
     bedrockStatus = result.status;
+    if (result.brief) {
+      aiBrief = result.brief;
+      providerUsed = "Amazon Bedrock";
+    }
   }
 
   const brief = aiBrief ?? buildRuleBasedBrief(tasks, context);
   let note: string | undefined;
-  if (aiBrief) {
-    note = `Generated with Amazon Bedrock · ${config.modelId} · ${config.region}`;
+  if (providerUsed === "Google Gemini") {
+    note = `Generated with Google Gemini · ${geminiModelUsed || geminiConfig.modelId}`;
+  } else if (providerUsed === "Amazon Bedrock") {
+    note = `Generated with Amazon Bedrock · ${bedrockConfig.modelId} · ${bedrockConfig.region}`;
   } else if (authRequired) {
-    note = "Amazon Bedrock is configured, but production AI requests require a signed-in Supabase account. The rules-based planner is active meanwhile.";
-  } else if (!isBedrockEnabled()) {
-    note = "Rules-based planning is active. Configure AWS credentials, model access, and BEDROCK_ENABLED=true to enable Amazon Bedrock.";
-  } else if (bedrockStatus === "unavailable") {
-    note = "Amazon Bedrock could not complete this request. CampusMate safely used its rules-based planning engine instead; check your AWS region, credentials, model access, and IAM permissions.";
+    note = "External AI requests in production require a signed-in Supabase account. The rules-based planner is active meanwhile.";
+  } else if (geminiStatus === "unavailable" || bedrockStatus === "unavailable") {
+    note = "The configured AI provider could not complete this request. CampusMate safely used its rules-based planning engine instead; check the provider key, model access, and usage limits.";
+  } else if (!isGeminiEnabled() && !isBedrockEnabled()) {
+    note = "Rules-based planning is active. Add GEMINI_API_KEY to enable Google Gemini, or configure Amazon Bedrock if you have access.";
   } else {
     note = "CampusMate's rules-based planning engine is active.";
   }

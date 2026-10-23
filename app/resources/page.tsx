@@ -125,14 +125,15 @@ function todayLocal() {
 }
 
 const sectionCopy: Record<Section, { number: string; label: string; heading: string; description: string }> = {
-  courses: { number: "01", label: "YOUR LEARNING MAP", heading: "Keep your subjects close.", description: "Collect the courses that shape your week, so class sessions and study time can belong somewhere." },
-  classes: { number: "02", label: "FIXED COMMITMENTS", heading: "Give the week a little shape.", description: "Record lectures and labs with real start and end times. Your schedule stays editable as life changes." },
-  focus: { number: "03", label: "TIME WELL SPENT", heading: "Make focus visible.", description: "Start a study session, keep the timer honest, and finish when you are ready. Progress does not need to be perfect." },
-  plans: { number: "04", label: "PLANS YOU CAN RETURN TO", heading: "Save a plan, not a promise.", description: "Keep useful study drafts, accept the ones that fit, and archive plans that no longer serve the day." },
+  courses: { number: "01", label: "YOUR LEARNING MAP", heading: "Courses and classes, together.", description: "Manage your subjects and their lectures or labs in one place. Link every class to a course and keep the whole learning map connected." },
+  classes: { number: "01", label: "YOUR LEARNING MAP", heading: "Courses and classes, together.", description: "Manage your subjects and their lectures or labs in one place. Link every class to a course and keep the whole learning map connected." },
+  focus: { number: "02", label: "TIME WELL SPENT", heading: "Make focus visible.", description: "Start a study session, keep the timer honest, and finish when you are ready. Progress does not need to be perfect." },
+  plans: { number: "03", label: "PLANS YOU CAN RETURN TO", heading: "Save a plan, not a promise.", description: "Keep useful study drafts, accept the ones that fit, and archive plans that no longer serve the day." },
 };
 
 export default function ResourcesPage() {
   const [section, setSection] = useState<Section>("courses");
+  const [darkTone, setDarkTone] = useState(false);
   const [courses, setCourses] = useState<Course[]>([]);
   const [classes, setClasses] = useState<ClassSession[]>([]);
   const [focusSessions, setFocusSessions] = useState<FocusSession[]>([]);
@@ -145,6 +146,8 @@ export default function ResourcesPage() {
   const [clock, setClock] = useState(0);
   const [todayStamp, setTodayStamp] = useState("TODAY");
   const backupInputRef = useRef<HTMLInputElement>(null);
+  const classFormRef = useRef<HTMLFormElement>(null);
+  const classTitleInputRef = useRef<HTMLInputElement>(null);
 
   const [courseId, setCourseId] = useState<string | null>(null);
   const [courseTitle, setCourseTitle] = useState("");
@@ -417,7 +420,7 @@ export default function ResourcesPage() {
       if (!Array.isArray(tasks) || tasks.length > 40 || !tasks.every((item) => {
         if (!item || typeof item !== "object") return false;
         const task = item as Record<string, unknown>;
-        return (typeof task.id === "number" || typeof task.id === "string") && typeof task.title === "string" && task.title.trim().length > 0 && typeof task.detail === "string" && typeof task.time === "string" && typeof task.duration === "string" && ["Today", "Soon", "Whenever"].includes(String(task.priority)) && typeof task.done === "boolean" && ["study", "class", "life"].includes(String(task.kind));
+        return (typeof task.id === "number" || typeof task.id === "string") && typeof task.title === "string" && task.title.trim().length > 0 && typeof task.detail === "string" && typeof task.time === "string" && typeof task.duration === "string" && ["Low", "Medium", "High", "Today", "Soon", "Whenever"].includes(String(task.priority)) && typeof task.done === "boolean" && ["study", "class", "life"].includes(String(task.kind));
       })) throw new Error("The backup's planner task list is missing or contains invalid records.");
       persistLocalSnapshot(imported);
       window.localStorage.setItem("campusmate-tasks", JSON.stringify(tasks));
@@ -430,12 +433,16 @@ export default function ResourcesPage() {
   }
 
   useEffect(() => {
+    try { setDarkTone(window.localStorage.getItem("campusmate-color-tone") === "sky-purple"); } catch { /* use the daylight default */ }
+    const syncTone = (event: StorageEvent) => { if (event.key === "campusmate-color-tone") setDarkTone(event.newValue === "sky-purple"); };
+    window.addEventListener("storage", syncTone);
     void loadAll();
     setClassStart(localDateTimeOffset(30));
     setClassEnd(localDateTimeOffset(90));
     setPlanDateDraft(todayLocal());
     setClock(Date.now());
     setTodayStamp(new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short" }).toUpperCase());
+    return () => window.removeEventListener("storage", syncTone);
   }, [loadAll]);
 
   useEffect(() => {
@@ -452,6 +459,8 @@ export default function ResourcesPage() {
     try {
       await action();
       if (refresh) await loadAll(true);
+      // Keep the dashboard's schedule snapshot current after cloud and local writes.
+      window.dispatchEvent(new Event("campusmate:resources-updated"));
       setNotice(successMessage);
     } catch (caught) {
       const issue = caught as ApiError;
@@ -493,9 +502,22 @@ export default function ResourcesPage() {
   }
 
   function editClassSession(item: ClassSession) {
-    setSection("classes"); setClassSessionId(item.id); setClassTitle(item.title); setClassCourseId(item.course_id ?? ""); setClassLocation(item.location ?? "");
-    setClassStart(localDateTimeFromIso(item.starts_at)); setClassEnd(localDateTimeFromIso(item.ends_at));
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    setSection("courses");
+    setError("");
+    setNotice(`Editing “${item.title}”. Update the fields below, then choose Save changes.`);
+    setClassSessionId(item.id);
+    setClassTitle(item.title);
+    setClassCourseId(item.course_id ?? "");
+    setClassLocation(item.location ?? "");
+    setClassStart(localDateTimeFromIso(item.starts_at));
+    setClassEnd(localDateTimeFromIso(item.ends_at));
+
+    // The class editor is below the course editor. Scroll directly to it rather
+    // than to the top of the page, where the edit form would remain off-screen.
+    window.requestAnimationFrame(() => {
+      classFormRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      window.setTimeout(() => classTitleInputRef.current?.focus({ preventScroll: true }), 350);
+    });
   }
 
   async function startFocus(event: FormEvent<HTMLFormElement>) {
@@ -531,7 +553,7 @@ export default function ResourcesPage() {
   }
 
   const meta = sectionCopy[section];
-  return <main className="resource-shell">
+  return <main className={`resource-shell ${darkTone ? "theme-sky-purple" : "theme-light"}`}>
     <div className="resource-atmosphere" aria-hidden="true" />
     <header className="resource-topbar">
       <Link className="resource-brand" href="/">campus<span>mate</span><small>YOUR DAY, YOUR WAY</small></Link>
@@ -554,12 +576,12 @@ export default function ResourcesPage() {
       <div className="resource-workspace">
         <aside className="resource-rail" aria-label="Learning sections">
           <span className="resource-rail-label">YOUR TOOLKIT</span>
-          {(["courses", "classes", "focus", "plans"] as Section[]).map((id) => <button key={id} onClick={() => { setSection(id); setError(""); setNotice(""); }} className={section === id ? "selected" : ""}><span>{sectionCopy[id].number}</span>{id === "courses" ? "Courses" : id === "classes" ? "Class schedule" : id === "focus" ? "Focus sessions" : "Saved plans"}<b>{id === "courses" ? courses.length : id === "classes" ? classes.length : id === "focus" ? focusSessions.length : plans.length}</b></button>)}
+          {(["courses", "focus", "plans"] as Section[]).map((id) => <button key={id} onClick={() => { setSection(id); setError(""); setNotice(""); }} className={section === id ? "selected" : ""}><span>{sectionCopy[id].number}</span>{id === "courses" ? "Courses & classes" : id === "focus" ? "Focus sessions" : "Saved plans"}<b>{id === "courses" ? courses.length + classes.length : id === "focus" ? focusSessions.length : plans.length}</b></button>)}
           <div className="resource-rail-note"><span>FIELD NOTE</span><p>A useful plan leaves room for breaks, changes, and being human.</p></div>
         </aside>
 
         <section className="resource-panel">
-          <div className="resource-panel-heading"><div><span className="resource-eyebrow">{meta.number} / {meta.label}</span><h2>{meta.heading}</h2><p>{meta.description}</p></div><span className="resource-panel-mark">CM<span>·</span></span></div>
+          <div className="resource-panel-heading"><div><span className="resource-eyebrow">{meta.number} / {meta.label}</span><h2>{meta.heading}</h2><p>{meta.description}</p></div></div>
           {loading && accessState === "unknown" ? <div className="resource-loading"><span className="resource-spinner"/> Gathering your learning space…</div> : <>
             {section === "courses" && <div className="resource-two-col">
               <form className="resource-form-card" onSubmit={submitCourse}>
@@ -574,17 +596,18 @@ export default function ResourcesPage() {
               </div>
             </div>}
 
-            {section === "classes" && <div className="resource-two-col">
-              <form className="resource-form-card" onSubmit={submitClass}>
+            {section === "courses" && <div className="resource-two-col resource-class-workspace">
+              <form ref={classFormRef} className={`resource-form-card resource-class-form ${classSessionId ? "is-editing" : ""}`} onSubmit={submitClass}>
                 <span className="resource-form-kicker">{classSessionId ? "UPDATE THE TIMETABLE" : "ADD TO THE TIMETABLE"}</span><h3>{classSessionId ? "Edit this commitment." : "Put a class on the map."}</h3>
-                <label>Class or lecture title<input value={classTitle} onChange={(event) => setClassTitle(event.target.value)} maxLength={180} required placeholder="e.g. Applied Physics lecture"/></label>
+                {classSessionId && <p className="resource-class-editing-note" role="status">You're editing a saved class. Your original session stays in place until you save these changes.</p>}
+                <label>Class or lecture title<input ref={classTitleInputRef} value={classTitle} onChange={(event) => setClassTitle(event.target.value)} maxLength={180} required placeholder="e.g. Applied Physics lecture"/></label>
                 <label>Related course<select value={classCourseId} onChange={(event) => setClassCourseId(event.target.value)}><option value="">No course selected</option>{courses.map((course) => <option key={course.id} value={course.id}>{course.title}</option>)}</select></label>
                 <label>Location <small>OPTIONAL</small><input value={classLocation} onChange={(event) => setClassLocation(event.target.value)} maxLength={120} placeholder="e.g. Block C · Room 204"/></label>
                 <div className="resource-form-pair"><label>Starts<input type="datetime-local" required value={classStart} onChange={(event) => setClassStart(event.target.value)}/></label><label>Ends<input type="datetime-local" required value={classEnd} onChange={(event) => setClassEnd(event.target.value)}/></label></div>
                 <div className="resource-form-actions"><button className="resource-primary" disabled={busy || !canManageResources}>{busy ? "SAVING…" : classSessionId ? "Save changes ↗" : "Save class ↗"}</button>{classSessionId && <button className="resource-secondary" type="button" onClick={() => { setClassSessionId(null); setClassTitle(""); setClassCourseId(""); setClassLocation(""); setClassStart(localDateTimeOffset(30)); setClassEnd(localDateTimeOffset(90)); }}>Cancel</button>}</div>
               </form>
               <div className="resource-list-card"><div className="resource-list-head"><div><span className="resource-form-kicker">UPCOMING COMMITMENTS</span><h3>{classes.length ? `${classes.length} scheduled session${classes.length === 1 ? "" : "s"}` : "Your schedule, gently started."}</h3></div><span className="resource-count">{String(classes.length).padStart(2, "0")}</span></div>
-                {classes.length ? <div className="resource-record-list">{[...classes].sort((a, b) => Date.parse(a.starts_at) - Date.parse(b.starts_at)).map((item, index) => <article className="resource-record resource-record-tall" key={item.id}><span className="resource-record-index">{String(index + 1).padStart(2, "0")}</span><div className="resource-record-main"><strong>{item.title}</strong><span>{dateLabel(item.starts_at)} – {new Date(item.ends_at).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })}</span><small>{courseName(item.course_id)}{item.location ? ` · ${item.location}` : ""}</small></div><div className="resource-record-actions"><button className="resource-action-button resource-action-edit" aria-label={`Edit schedule entry ${item.title}`} disabled={busy} onClick={() => editClassSession(item)}>EDIT CLASS</button><button className="resource-action-button resource-action-danger" aria-label={`Remove schedule entry ${item.title}`} disabled={busy} onClick={() => { if (window.confirm(`Remove “${item.title}” from your schedule?`)) void perform(() => resourceRequest(`/api/class-sessions?id=${encodeURIComponent(item.id)}`, { method: "DELETE" }), "Class session removed."); }}>REMOVE</button></div></article>)}</div> : <div className="resource-empty"><strong>No classes scheduled yet.</strong><span>Add a lecture or lab to give your week a little structure.</span></div>}
+                {classes.length ? <div className="resource-record-list">{[...classes].sort((a, b) => Date.parse(a.starts_at) - Date.parse(b.starts_at)).map((item, index) => <article className="resource-record resource-record-tall" key={item.id}><span className="resource-record-index">{String(index + 1).padStart(2, "0")}</span><div className="resource-record-main"><strong>{item.title}</strong><span>{dateLabel(item.starts_at)} – {new Date(item.ends_at).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" })}</span><small>{courseName(item.course_id)}{item.location ? ` · ${item.location}` : ""}</small></div><div className="resource-record-actions"><button type="button" className="resource-action-button resource-action-edit" aria-label={`Edit schedule entry ${item.title}`} disabled={busy} onClick={() => editClassSession(item)}>EDIT CLASS</button><button type="button" className="resource-action-button resource-action-danger" aria-label={`Remove schedule entry ${item.title}`} disabled={busy} onClick={() => { if (window.confirm(`Remove “${item.title}” from your schedule?`)) void perform(() => resourceRequest(`/api/class-sessions?id=${encodeURIComponent(item.id)}`, { method: "DELETE" }), "Class session removed."); }}>REMOVE</button></div></article>)}</div> : <div className="resource-empty"><strong>No classes scheduled yet.</strong><span>Add a lecture or lab to give your week a little structure.</span></div>}
               </div>
             </div>}
 

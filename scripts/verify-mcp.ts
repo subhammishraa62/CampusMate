@@ -5,10 +5,7 @@ async function main() {
   const headers = new Headers();
   if (process.env.CAMPUSMATE_MCP_TOKEN) headers.set("Authorization", `Bearer ${process.env.CAMPUSMATE_MCP_TOKEN}`);
 
-  const client = new Client(
-  { name: "campusmate-mcp-smoke-test", version: "1.0.0" },
-  { versionNegotiation: { mode: "auto" } }
-);
+  const client = new Client({ name: "campusmate-mcp-smoke-test", version: "1.0.0" });
   const transport = new StreamableHTTPClientTransport(new URL(endpoint), { requestInit: { headers } });
   let connected = false;
   try {
