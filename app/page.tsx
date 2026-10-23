@@ -117,6 +117,11 @@ export default function Home() {
   const [planPrompt, setPlanPrompt] = useState("");
   const [planGenerated, setPlanGenerated] = useState(false);
   const [planAccepted, setPlanAccepted] = useState(false);
+  const [planBrief, setPlanBrief] = useState<DailyBrief | null>(null);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planError, setPlanError] = useState("");
+  const [planSaving, setPlanSaving] = useState(false);
+  const [planSaveError, setPlanSaveError] = useState("");
   const [focusOn, setFocusOn] = useState(false);
   const doneCount = tasks.filter(task => task.done).length;
   const remaining = tasks.length - doneCount;
@@ -478,6 +483,98 @@ export default function Home() {
     } finally { setBriefLoading(false); }
   }
 
+  async function generatePlanningStudioDraft() {
+    const context = planPrompt.trim() || "Help me make a realistic plan around my classes and closest deadline.";
+    setPlanPrompt(context);
+    setPlanLoading(true);
+    setPlanError("");
+    setPlanSaveError("");
+    setPlanGenerated(false);
+    setPlanAccepted(false);
+    setPlanBrief(null);
+
+    try {
+      const response = await fetch("/api/intelligence-brief", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tasks: plannerTasks, context }),
+      });
+      const payload = await response.json() as { brief?: DailyBrief; error?: string };
+      if (!response.ok || !payload.brief) {
+        throw new Error(payload.error || "CampusMate couldn't generate your plan. Please try again.");
+      }
+      setPlanBrief(payload.brief);
+      setBriefData(payload.brief);
+      setBriefContext(context);
+      setPlanGenerated(true);
+      announce(payload.brief.engine === "ai"
+        ? "Bedrock-assisted Planning Studio draft generated"
+        : "Planning Studio draft generated using CampusMate's rules-based engine");
+    } catch (cause) {
+      setPlanError(cause instanceof Error ? cause.message : "Couldn't generate your plan. Please try again.");
+    } finally {
+      setPlanLoading(false);
+    }
+  }
+
+  async function acceptPlanningDraft() {
+    if (!planBrief || planSaving) return;
+
+    setPlanSaving(true);
+    setPlanSaveError("");
+
+    try {
+      const response = await fetch("/api/study-plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          plan_date: localDateKey,
+          title: planBrief.headline,
+          summary: [planBrief.summary, planBrief.reason]
+            .filter(Boolean)
+            .join("\n\n")
+            .slice(0, 2000),
+          status: "accepted",
+          source: planBrief.engine === "ai" ? "ai" : "rules",
+          plan_data: {
+            prompt: planPrompt,
+            priorityTaskId: planBrief.priorityTaskId,
+            priorityTitle: planBrief.priorityTitle,
+            reason: planBrief.reason,
+            nextSteps: planBrief.nextSteps,
+            plan: planBrief.plan,
+            note: planBrief.note ?? null,
+            generatedAt: planBrief.generatedAt ?? new Date().toISOString(),
+          },
+        }),
+      });
+
+      const payload = await response.json() as {
+        plan?: { id?: string };
+        error?: string;
+      };
+
+      if (!response.ok || !payload.plan) {
+        throw new Error(
+          payload.error || (response.status === 401
+            ? "Please sign in to save this plan. Your draft is still available."
+            : "CampusMate couldn't save your plan. Please try again.")
+        );
+      }
+
+      setPlanAccepted(true);
+      announce("Planning draft saved to your study plans");
+    } catch (cause) {
+      setPlanSaveError(
+        cause instanceof Error
+          ? cause.message
+          : "CampusMate couldn't save your plan. Please try again."
+      );
+    } finally {
+      setPlanSaving(false);
+    }
+  }
+
   async function runMcpAgentDemo() {
     setMcpDemoLoading(true);
     setMcpDemoError("");
@@ -668,7 +765,53 @@ export default function Home() {
         <footer className="page-footer"><span>Made for the full life outside your to-do list.</span><span>CampusMate <i/> A little more room to think.</span><button onClick={() => announce("Thanks — feedback helps us make this better.")}>Leave a thought <span>↗</span></button></footer>
       </div>
     </section>
-    {commandOpen && <div className="modal-scrim command-scrim" onMouseDown={event => { if (event.target === event.currentTarget) setCommandOpen(false); }}><section className="command-modal" role="dialog" aria-modal="true" aria-labelledby="command-title"><button className="modal-x" onClick={() => setCommandOpen(false)} aria-label="Close AI command center">CLOSE</button><div className="command-kicker"><span className="command-pulse"/> CAMPUSMATE / PLANNING STUDIO</div><h2 id="command-title">Let’s make room<br/><em>for your real life.</em></h2><p className="command-intro">Tell me what’s on your plate. I’ll shape a draft around your fixed commitments, energy, and deadlines.</p><label className="command-label" htmlFor="plan-prompt">WHAT DOES TODAY LOOK LIKE?</label><textarea id="plan-prompt" value={planPrompt} onChange={event => { setPlanPrompt(event.target.value); setPlanGenerated(false); setPlanAccepted(false); }} placeholder="I have two lectures, a physics assignment due tomorrow, and want some time to exercise…" rows={3}/><div className="command-chips"><button onClick={() => { setPlanPrompt("I’m running behind. Help me protect my classes and finish the most urgent assignment."); setPlanGenerated(false); setPlanAccepted(false); }}>I’m running behind</button><button onClick={() => { setPlanPrompt("Help me balance study time, proper breaks, and a little exercise today."); setPlanGenerated(false); setPlanAccepted(false); }}>Balance study & life</button><button onClick={() => { setPlanPrompt("I have an assignment due tomorrow and need a realistic plan around my lectures."); setPlanGenerated(false); setPlanAccepted(false); }}>Deadline tomorrow</button></div>{!planGenerated ? <button className="command-generate" onClick={() => { if (!planPrompt.trim()) { setPlanPrompt("Help me make a realistic plan around my classes and closest deadline."); } setPlanGenerated(true); setPlanAccepted(false); }}>Build my day <span>↗</span></button> : <div className="generated-plan"><div className="generated-plan-head"><div><span className="section-overline">YOUR FIRST DRAFT</span><h3>A plan with breathing room.</h3></div><span className="draft-badge">DEMO PLAN</span></div><p className="plan-disclaimer">A sample plan based on your prompt and the demo schedule. Nothing is sent or changed automatically.</p><div className="plan-step"><span>09:00</span><div><strong>Keep fixed commitments first</strong><small>Classes, travel and anything that cannot move</small></div><b>PROTECT</b></div><div className="plan-step"><span>10:30</span><div><strong>One focused work block</strong><small>Start with the closest deadline · 35 minutes</small></div><b>FOCUS</b></div><div className="plan-step"><span>12:00</span><div><strong>Reset, eat, then reassess</strong><small>A real break before the next work session</small></div><b>RESET</b></div><div className="plan-step"><span>16:00</span><div><strong>Finish with a flexible block</strong><small>Use this for unfinished work or exercise</small></div><b>FLEX</b></div><div className="plan-actions"><button className="quiet-button" onClick={() => { setPlanGenerated(false); setPlanAccepted(false); }}>Adjust prompt <span>↺</span></button><button className="start-button" onClick={() => { setPlanAccepted(true); setTasks(old => old.some(task => task.title === "Review my CampusMate day plan") ? old : [...old, { id: Date.now(), title: "Review my CampusMate day plan", detail: "Your accepted draft · adjust anytime", time: "Flexible", duration: "5 min", priority: "Soon", done: false, kind: "life" }]); announce("Plan added to your task list"); }}>Accept this draft <span>↗</span></button></div>{planAccepted && <div className="plan-accepted">Draft accepted — a reminder has been added to your task list. The schedule above remains a frontend demo.</div>}</div>}<div className="command-footnote">Guided mode · You approve every change · This Planning Studio draft is a demo; Daily Intelligence uses Bedrock only when enabled</div></section></div>}
+    {commandOpen && <div className="modal-scrim command-scrim" onMouseDown={event => { if (event.target === event.currentTarget) setCommandOpen(false); }}><section className="command-modal" role="dialog" aria-modal="true" aria-labelledby="command-title"><button className="modal-x" onClick={() => setCommandOpen(false)} aria-label="Close AI command center">CLOSE</button><div className="command-kicker"><span className="command-pulse"/> CAMPUSMATE / PLANNING STUDIO</div><h2 id="command-title">Let’s make room<br/><em>for your real life.</em></h2><p className="command-intro">Tell me what’s on your plate. I’ll shape a draft around your fixed commitments, energy, and deadlines.</p><label className="command-label" htmlFor="plan-prompt">WHAT DOES TODAY LOOK LIKE?</label><textarea id="plan-prompt" value={planPrompt} onChange={event => { setPlanPrompt(event.target.value); setPlanGenerated(false); setPlanAccepted(false); setPlanBrief(null); setPlanError(""); }} placeholder="I have two lectures, a physics assignment due tomorrow, and want some time to exercise…" rows={3}/><div className="command-chips"><button onClick={() => { setPlanPrompt("I’m running behind. Help me protect my classes and finish the most urgent assignment."); setPlanGenerated(false); setPlanAccepted(false); setPlanBrief(null); setPlanError(""); }}>I’m running behind</button><button onClick={() => { setPlanPrompt("Help me balance study time, proper breaks, and a little exercise today."); setPlanGenerated(false); setPlanAccepted(false); setPlanBrief(null); setPlanError(""); }}>Balance study & life</button><button onClick={() => { setPlanPrompt("I have an assignment due tomorrow and need a realistic plan around my lectures."); setPlanGenerated(false); setPlanAccepted(false); setPlanBrief(null); setPlanError(""); }}>Deadline tomorrow</button></div>{!planGenerated ? (
+              <button
+                className="command-generate"
+                onClick={() => { void generatePlanningStudioDraft(); }}
+                disabled={planLoading}
+              >
+                {planLoading ? <><i className="brief-spinner" /> BUILDING YOUR PLAN…</> : <>Build my day <span>↗</span></>}
+              </button>
+            ) : planBrief ? (
+              <div className="generated-plan">
+                <div className="generated-plan-head">
+                  <div>
+                    <span className="section-overline">YOUR PLANNING DRAFT</span>
+                    <h3>{planBrief.headline}</h3>
+                  </div>
+                  <span className="draft-badge">{planBrief.engine === "ai" ? "BEDROCK-ASSISTED" : "RULES-BASED"}</span>
+                </div>
+                <p className="plan-disclaimer">{planBrief.summary}</p>
+                <p className="plan-disclaimer">{planBrief.reason}</p>
+                {planBrief.plan.map((item, index) => (
+                  <div className="plan-step" key={`${item.title}-${index}`}>
+                    <span>{item.time}</span>
+                    <div><strong>{item.title}</strong><small>{item.detail}</small></div>
+                    <b>{index === 0 ? "FOCUS" : index === 1 ? "NEXT" : "FLEX"}</b>
+                  </div>
+                ))}
+                {planBrief.nextSteps.length > 0 && (
+                  <div className="plan-disclaimer">
+                    <strong>Suggested next steps</strong>
+                    <ol>{planBrief.nextSteps.map((step, index) => <li key={`${index}-${step}`}>{step}</li>)}</ol>
+                  </div>
+                )}
+                {planBrief.note && <p className="plan-disclaimer">{planBrief.note}</p>}
+                <div className="plan-actions">
+                  <button className="quiet-button" onClick={() => { setPlanGenerated(false); setPlanAccepted(false); setPlanBrief(null); setPlanError(""); setPlanSaveError(""); }}>Adjust prompt <span>↺</span></button>
+                  <button
+                    className="start-button"
+                    onClick={() => { void acceptPlanningDraft(); }}
+                    disabled={planSaving || planAccepted}
+                  >{planSaving ? "Saving plan…" : planAccepted ? "Plan saved" : "Accept this draft"} <span>↗</span></button>
+                </div>
+                {planSaveError && <p className="brief-error" role="alert">{planSaveError}</p>}
+                {planAccepted && <div className="plan-accepted" role="status">Draft saved to your study plans. Your schedule has not been changed automatically.</div>}
+              </div>
+            ) : null}
+            {planError && <p className="brief-error" role="alert">{planError}</p>}
+            <div className="command-footnote">Guided mode · You approve every change · This Planning Studio draft is a demo; Daily Intelligence uses Bedrock only when enabled</div></section></div>}
     {settingsOpen && <div className="modal-scrim settings-scrim" onMouseDown={event => { if (event.target === event.currentTarget) setSettingsOpen(false); }}><section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title"><button className="modal-x" onClick={() => setSettingsOpen(false)} aria-label="Close settings">CLOSE</button><span className="section-overline">YOUR PREFERENCES</span><h2 id="settings-title">How much help feels right?</h2><p>Choose how CampusMate handles the flexible parts of your day. You can change this whenever you like.</p><section className="appearance-settings"><div className="background-settings-heading"><span className="section-overline">APPEARANCE</span><strong>Choose your atmosphere</strong><p>A softer sky-purple night tone, without going full black. Your choice is saved on this device.</p></div><div className="tone-options"><button type="button" className={`tone-option light-tone-option ${!darkTone ? "chosen" : ""}`} onClick={() => changeTone(false)}><span className="tone-preview light-tone-preview"/><span><strong>Daylight</strong><small>Warm, airy and clear</small></span><span className="tone-radio">{!darkTone ? "SELECTED" : ""}</span></button><button type="button" className={`tone-option purple-tone-option ${darkTone ? "chosen" : ""}`} onClick={() => changeTone(true)}><span className="tone-preview purple-tone-preview"/><span><strong>Sky purple</strong><small>Dusky violet, blue and lavender</small></span><span className="tone-radio">{darkTone ? "SELECTED" : ""}</span></button></div></section><section className="background-settings"><div className="background-settings-heading"><span className="section-overline">MAKE IT YOURS</span><strong>Your background</strong><p>Upload a photo you love. It will sit behind the dashboard with a soft overlay so everything stays readable.</p></div><div className="background-preview" style={{ backgroundImage: `linear-gradient(90deg,rgba(247,245,239,.24),rgba(247,245,239,.08)),url("${backgroundImage}")` }}><span>{customBackground ? "YOUR PHOTO" : "FOLLOWS LOCAL TIME"}</span><small>{customBackground ? backgroundName || "Custom image" : `${timeLabel(localHour).toLowerCase()} · ${activeScene.name}`}</small></div><input ref={backgroundInputRef} className="background-file-input" type="file" accept="image/*" onChange={event => { void uploadBackground(event.target.files?.[0]); event.currentTarget.value = ""; }} /><div className="background-actions"><button type="button" className="background-upload-button" onClick={() => backgroundInputRef.current?.click()}>{customBackground ? "Choose another photo" : "Upload a photo"}</button>{customBackground && <button type="button" className="background-reset-button" onClick={resetBackground}>Use time-based backgrounds</button>}</div><small className="background-storage-note">Your image is saved in this browser on this device. It isn't uploaded to a server.</small></section><div className="settings-options"><button className={`settings-option ${automation === "guided" ? "selected" : ""}`} onClick={() => { setAutomation("guided"); announce("Guided mode selected"); }}><span className="settings-option-title">Guided</span><span className="settings-option-desc">Get suggestions, understand the trade-offs, and decide what changes.</span><span className="settings-option-foot">YOU STAY IN CONTROL</span></button><button className={`settings-option ${automation === "autopilot" ? "selected" : ""}`} onClick={() => { setAutomation("autopilot"); announce("Auto-pilot selected"); }}><span className="settings-option-title">Auto-pilot</span><span className="settings-option-desc">Let CampusMate rearrange flexible study blocks when your day changes. Fixed commitments stay protected.</span><span className="settings-option-foot">ROUTINE CHANGES, HANDLED</span></button></div><div className="settings-note">Important decisions—like cancelling commitments—always stay yours.</div><div className="settings-modal-actions"><button className="start-button" onClick={() => setSettingsOpen(false)}>Done <span>↗</span></button></div></section></div>}
     {addOpen && <div className="modal-scrim" onMouseDown={event => { if (event.target === event.currentTarget) setAddOpen(false); }}><section className="add-modal" role="dialog" aria-modal="true" aria-labelledby="add-title"><button className="modal-x" onClick={() => { setAddOpen(false); setEditingTaskId(null); }} aria-label="Close">CLOSE</button><span className="section-overline">GET IT OUT OF YOUR HEAD</span><h2 id="add-title">{editingTaskId !== null ? "Make a small adjustment." : "What’s on your mind?"}</h2><p>{editingTaskId !== null ? "Update the details and keep your plan flexible." : "Add one thing. We’ll find a place for it later."}</p><form onSubmit={event => { event.preventDefault(); editingTaskId !== null ? saveTaskEdit() : addTask(); }}><label htmlFor="task-draft">Task or reminder</label><input autoFocus id="task-draft" value={taskDraft} onChange={event => setTaskDraft(event.target.value)} placeholder="e.g. Finish calculus problem set"/><label htmlFor="task-detail-draft">A little context</label><input id="task-detail-draft" value={taskDetailDraft} onChange={event => setTaskDetailDraft(event.target.value)} placeholder="Subject, room, deadline…"/><div className="task-form-grid"><div><label htmlFor="task-time-draft">Time</label><input id="task-time-draft" value={taskTimeDraft} onChange={event => setTaskTimeDraft(event.target.value)} placeholder="e.g. 2:30 PM"/></div><div><label htmlFor="task-priority-draft">Priority</label><select id="task-priority-draft" value={taskPriorityDraft} onChange={event => setTaskPriorityDraft(event.target.value as Task["priority"])}><option>Today</option><option>Soon</option><option>Whenever</option></select></div></div><div className="modal-actions"><button type="button" className="cancel-button" onClick={() => {setAddOpen(false);setEditingTaskId(null)}}>Not now</button><button type="submit" className="start-button" disabled={!taskDraft.trim()}>{editingTaskId !== null ? "Save changes" : "Add to my list"} <span>↗</span></button></div></form></section></div>}
     {toast && <div className="toast"><span className="toast-check">NOTE</span>{toast}<button onClick={() => setToast("")} aria-label="Dismiss">DISMISS</button></div>}
